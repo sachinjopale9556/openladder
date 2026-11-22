@@ -1,0 +1,149 @@
+<!doctype html>
+<html lang="en"><head><meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>OpenLadder: free PLC ladder simulator</title>
+<style>
+:root{--bg:#e2e7ea;--card:#f5f7f8;--ink:#14202a;--mut:#5d6b76;--ln:#b9c3ca;--rail:#33424e;--on:#0a8f5a;--onbg:#cdf0df;--btn:#14202a;--btnt:#f5f7f8}
+@media(prefers-color-scheme:dark){:root{--bg:#10171c;--card:#1a242b;--ink:#e4ebef;--mut:#8b99a4;--ln:#2d3b45;--rail:#9fb1bf;--on:#3ddc97;--onbg:#14392b;--btn:#e4ebef;--btnt:#10171c}}
+*{box-sizing:border-box}
+body{margin:0;background:var(--bg);color:var(--ink);font:15px/1.4 "Segoe UI",system-ui,sans-serif;padding:12px;max-width:900px;margin-inline:auto}
+h1{font-size:22px;margin:4px 0 2px;letter-spacing:-.01em}
+.sub{color:var(--mut);margin:0 0 12px;font-size:13px}
+.panel{background:var(--card);border:1px solid var(--ln);border-radius:10px;padding:10px;margin-bottom:10px}
+.row{display:flex;flex-wrap:wrap;gap:6px;align-items:center}
+button,select,input{font:inherit;color:inherit}
+button{background:var(--btn);color:var(--btnt);border:0;border-radius:6px;padding:7px 11px;cursor:pointer}
+button.g{background:transparent;color:var(--ink);border:1px solid var(--ln)}
+button:focus-visible,select:focus-visible,input:focus-visible{outline:2px solid var(--on);outline-offset:1px}
+#ins button{background:transparent;color:var(--ink);border:1.5px solid var(--rail);min-width:58px;font-variant-numeric:tabular-nums;touch-action:manipulation;user-select:none}
+#ins button.on{background:var(--on);color:#fff;border-color:var(--on)}
+.lamp{display:inline-flex;align-items:center;gap:5px;font-size:13px;margin-right:8px}
+.lamp i{width:16px;height:16px;border-radius:50%;border:1.5px solid var(--rail);display:inline-block}
+.lamp.on i{background:var(--on);border-color:var(--on);box-shadow:0 0 8px var(--on)}
+.lab{font-size:12px;color:var(--mut);margin:0 0 5px}
+.rung{display:flex;align-items:stretch;gap:0;margin-bottom:8px;background:var(--card);border:1px solid var(--ln);border-radius:10px;overflow-x:auto}
+.rail{width:6px;background:var(--rail);flex:none}
+.wire{display:flex;align-items:center;flex:1;min-width:0;padding:8px 0;gap:0}
+.cell{border:1.5px solid var(--rail);border-radius:6px;padding:4px;margin:0 6px;background:var(--bg);flex:none;position:relative}
+.cell.on{border-color:var(--on);background:var(--onbg)}
+.cell select,.cell input{background:transparent;border:1px solid var(--ln);border-radius:4px;padding:3px;width:76px;display:block;margin:2px 0}
+.cell input{width:76px}
+.cell input.p{width:76px}
+.cell small{display:block;color:var(--mut);font-size:11px;min-height:14px}
+.x{position:absolute;top:-9px;right:-9px;width:20px;height:20px;border-radius:50%;padding:0;font-size:12px;line-height:1}
+.alt{border-top:1px dashed var(--ln);margin-top:3px;padding-top:2px}
+.seg{height:2px;background:var(--rail);width:12px;flex:none}
+.seg.on{background:var(--on)}
+.side{display:flex;flex-direction:column;gap:4px;padding:6px;justify-content:center}
+.side button{padding:3px 8px;font-size:12px}
+.hint{color:var(--mut);font-size:12px;margin-top:10px}
+label{font-size:13px}
+</style></head><body>
+<h1>OpenLadder</h1>
+<p class="sub">Free PLC ladder logic simulator. Nothing is locked.</p>
+
+<div class="panel">
+<p class="lab">Inputs (tap to switch)</p><div id="ins" class="row"></div>
+<p class="lab" style="margin-top:10px">Outputs</p><div id="outs" class="row"></div>
+</div>
+
+<div class="panel row">
+<button id="run">Stop</button>
+<button id="rst" class="g">Reset</button>
+<select id="ex"><option value="">Load example</option><option value="ss">Start / stop with seal-in</option><option value="tm">Delayed lamp (TON)</option><option value="ct">Counter (CTU)</option><option value="fl">Flasher</option></select>
+<label><input type="checkbox" id="mom"> Momentary inputs</label>
+<button id="exp" class="g">Export</button>
+<button id="imp" class="g">Import</button>
+<button id="clr" class="g">Clear</button>
+<input type="file" id="file" accept=".json" hidden>
+</div>
+
+<div id="rungs"></div>
+<button id="addr">Add rung</button>
+<p class="hint">Contacts: NO, NC, P (rising edge), N (falling edge). Use the parallel button on a contact to add an OR branch. Outputs: OUT, SET, RST, TON, TOF, CTU, RES. Addresses: I0.0 to I0.5, Q0.0 to Q0.3, M0.0 to M0.7, T1 to T8, C1 to C8. Timer presets are in seconds.</p>
+<datalist id="ad"></datalist>
+
+<script>
+const IN=[0,1,2,3,4,5].map(i=>'I0.'+i),OUT=[0,1,2,3].map(i=>'Q0.'+i);
+const CT=['NO','NC','P','N'],OT=['OUT','SET','RST','TON','TOF','CTU','RES'];
+const $=s=>document.querySelector(s);
+const c=(t,a,o)=>({t,a,o:o||null});
+const EX={
+ ss:()=>[{c:[c('NO','I0.0',c('NO','Q0.0')),c('NC','I0.1')],o:{t:'OUT',a:'Q0.0'}}],
+ tm:()=>[{c:[c('NO','I0.0',c('NO','M0.0')),c('NC','I0.1')],o:{t:'OUT',a:'M0.0'}},{c:[c('NO','M0.0')],o:{t:'TON',a:'T1',p:3}},{c:[c('NO','T1')],o:{t:'OUT',a:'Q0.0'}}],
+ ct:()=>[{c:[c('P','I0.0')],o:{t:'CTU',a:'C1',p:3}},{c:[c('NO','C1')],o:{t:'OUT',a:'Q0.0'}},{c:[c('NO','I0.1')],o:{t:'RES',a:'C1'}}],
+ fl:()=>[{c:[c('NO','I0.0'),c('NC','T2')],o:{t:'TON',a:'T1',p:1}},{c:[c('NO','T1')],o:{t:'TON',a:'T2',p:1}},{c:[c('NO','I0.0'),c('NC','T1')],o:{t:'OUT',a:'Q0.0'}}]
+};
+let prog;try{prog=JSON.parse(localStorage.getItem('openladder'))}catch(e){}
+if(!Array.isArray(prog))prog=EX.ss();
+let bits={},tc={},prev={},run=true;
+const save=()=>{try{localStorage.setItem('openladder',JSON.stringify(prog,(k,v)=>k[0]==='_'?undefined:v))}catch(e){}};
+const rd=a=>/^[TC]\d/.test(a)?!!(tc[a]&&tc[a].dn):!!bits[a];
+function ev(t,a,k){const x=rd(a);let r=t==='NO'?x:t==='NC'?!x:t==='P'?x&&!prev[k]:!x&&prev[k];prev[k]=x;return r}
+function scan(dt){prog.forEach((R,ri)=>{
+ let p=true;R._f=[];
+ R.c.forEach((e,ci)=>{const a=ev(e.t,e.a,ri+'.'+ci+'m'),b=e.o?ev(e.o.t,e.o.a,ri+'.'+ci+'o'):false;p=p&&(a||b);R._f.push(p)});
+ R._p=p;const o=R.o,a=o.a,k=ri+'.out',pre=(o.p||1);
+ if(o.t==='OUT')bits[a]=p;
+ else if(o.t==='SET'){if(p)bits[a]=true}
+ else if(o.t==='RST'){if(p)bits[a]=false}
+ else if(o.t==='RES'){if(p)tc[a]={acc:0,dn:false}}
+ else if(o.t==='TON'){const s=tc[a]||(tc[a]={acc:0,dn:false});if(p)s.acc=Math.min(s.acc+dt,pre*1000);else s.acc=0;s.dn=p&&s.acc>=pre*1000}
+ else if(o.t==='TOF'){const s=tc[a]||(tc[a]={acc:0,dn:false});if(p){s.dn=true;s.acc=0}else if(s.dn){s.acc+=dt;if(s.acc>=pre*1000)s.dn=false}}
+ else if(o.t==='CTU'){const s=tc[a]||(tc[a]={acc:0,dn:false});if(p&&!prev[k])s.acc++;s.dn=s.acc>=pre;prev[k]=p}
+})}
+function sel(opts,v,k,r,ci){return `<select data-k="${k}" data-r="${r}" data-c="${ci}" aria-label="${k}">${opts.map(x=>`<option${x===v?' selected':''}>${x}</option>`).join('')}</select>`}
+function adr(v,k,r,ci){return `<input data-k="${k}" data-r="${r}" data-c="${ci}" value="${v||''}" list="ad" size="5" aria-label="address" autocapitalize="characters" autocomplete="off">`}
+function render(){
+ $('#rungs').innerHTML=prog.map((R,ri)=>{
+  const cells=R.c.map((e,ci)=>`<div class="seg" data-s="${ri}.${ci}"></div><div class="cell" data-f="${ri}.${ci}">
+   <button class="x g" data-act="delc" data-r="${ri}" data-c="${ci}" aria-label="Remove contact">x</button>
+   ${sel(CT,e.t,'t',ri,ci)}${adr(e.a,'a',ri,ci)}
+   ${e.o?`<div class="alt">${sel(CT,e.o.t,'ot',ri,ci)}${adr(e.o.a,'oa',ri,ci)}</div>`:''}
+   <button class="g" style="padding:1px 6px;font-size:11px" data-act="par" data-r="${ri}" data-c="${ci}">${e.o?'Remove OR':'Add OR'}</button></div>`).join('');
+  const o=R.o,tcx=/^(TON|TOF|CTU)$/.test(o.t);
+  return `<div class="rung"><div class="rail"></div><div class="wire">${cells}
+   <div class="seg" data-s="${ri}.e"></div><button class="g" data-act="addc" data-r="${ri}" style="margin:0 6px;padding:4px 9px">+</button><div class="seg" data-s="${ri}.o"></div>
+   <div class="cell" data-f="${ri}.o">${sel(OT,o.t,'ot2',ri,0)}${adr(o.a,'oa2',ri,0)}${tcx?`<input class="p" type="number" min="1" step="1" data-k="p" data-r="${ri}" data-c="0" value="${o.p||1}" aria-label="preset">`:''}<small data-acc="${o.a}"></small></div></div>
+   <div class="side"><button class="g" data-act="delr" data-r="${ri}" aria-label="Delete rung">Delete</button></div><div class="rail"></div></div>`}).join('');
+ $('#ad').innerHTML=[...IN,...OUT,...[0,1,2,3,4,5,6,7].map(i=>'M0.'+i),...[1,2,3,4,5,6,7,8].map(i=>'T'+i),...[1,2,3,4,5,6,7,8].map(i=>'C'+i)].map(x=>`<option value="${x}">`).join('');
+}
+$('#rungs').addEventListener('change',e=>{
+ const t=e.target,k=t.dataset.k;if(!k)return;const R=prog[t.dataset.r],ci=+t.dataset.c,v=t.value.trim().toUpperCase();
+ if(k==='t')R.c[ci].t=t.value;else if(k==='a')R.c[ci].a=v;else if(k==='ot')R.c[ci].o.t=t.value;else if(k==='oa')R.c[ci].o.a=v;
+ else if(k==='ot2'){R.o.t=t.value;if(/^(TON|TOF|CTU)$/.test(t.value)&&!R.o.p)R.o.p=3}
+ else if(k==='oa2')R.o.a=v;else if(k==='p')R.o.p=Math.max(1,+t.value||1);
+ save();render();
+});
+$('#rungs').addEventListener('click',e=>{
+ const b=e.target.closest('[data-act]');if(!b)return;const R=prog[b.dataset.r],ci=+b.dataset.c;
+ switch(b.dataset.act){
+  case 'delc':R.c.splice(ci,1);break;
+  case 'par':R.c[ci].o=R.c[ci].o?null:{t:'NO',a:'M0.0'};break;
+  case 'addc':R.c.push(c('NO','I0.0'));break;
+  case 'delr':prog.splice(+b.dataset.r,1);break}
+ save();render();
+});
+$('#addr').onclick=()=>{prog.push({c:[c('NO','I0.0')],o:{t:'OUT',a:'Q0.0'}});save();render()};
+$('#ins').innerHTML=IN.map(a=>`<button data-i="${a}">${a}</button>`).join('');
+$('#outs').innerHTML=OUT.map(a=>`<span class="lamp" data-q="${a}"><i></i>${a}</span>`).join('');
+$('#ins').addEventListener('pointerdown',e=>{const b=e.target.closest('[data-i]');if(!b)return;const a=b.dataset.i;bits[a]=$('#mom').checked?true:!bits[a]});
+addEventListener('pointerup',()=>{if($('#mom').checked)IN.forEach(a=>bits[a]=false)});
+$('#run').onclick=()=>{run=!run;$('#run').textContent=run?'Stop':'Run'};
+const reset=()=>{bits={};tc={};prev={}};
+$('#rst').onclick=reset;
+$('#ex').onchange=e=>{if(EX[e.target.value]){prog=EX[e.target.value]();reset();save();render()}e.target.value=''};
+$('#clr').onclick=()=>{prog=[];reset();save();render()};
+$('#exp').onclick=()=>{const a=document.createElement('a');a.href=URL.createObjectURL(new Blob([JSON.stringify(prog,(k,v)=>k[0]==='_'?undefined:v,1)],{type:'application/json'}));a.download='ladder.json';a.click()};
+$('#imp').onclick=()=>$('#file').click();
+$('#file').onchange=e=>{const f=e.target.files[0];if(!f)return;f.text().then(t=>{try{const p=JSON.parse(t);if(Array.isArray(p)){prog=p;reset();save();render()}}catch(x){alert('This file is not a valid ladder program.')}})};
+function paint(){
+ document.querySelectorAll('[data-f]').forEach(e=>{const[r,c]=e.dataset.f.split('.'),R=prog[r];e.classList.toggle('on',!!R&&(c==='o'?R._p:R._f&&R._f[c]))});
+ document.querySelectorAll('[data-s]').forEach(e=>{const[r,c]=e.dataset.s.split('.'),R=prog[r];let on=false;if(R)on=c==='o'||c==='e'?!!R._p:c==='0'?true:!!(R._f&&R._f[c-1]);e.classList.toggle('on',on)});
+ document.querySelectorAll('[data-i]').forEach(b=>b.classList.toggle('on',!!bits[b.dataset.i]));
+ document.querySelectorAll('[data-q]').forEach(b=>b.classList.toggle('on',!!bits[b.dataset.q]));
+ document.querySelectorAll('[data-acc]').forEach(s=>{const a=s.dataset.acc,x=tc[a];s.textContent=x?(a[0]==='T'?(x.acc/1000).toFixed(1)+' s':x.acc):''});
+}
+render();
+setInterval(()=>{if(run)scan(50);paint()},50);
+</script></body></html>
